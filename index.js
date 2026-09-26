@@ -1,24 +1,57 @@
+require('dotenv').config()
+
 const express = require('express')
 const axios = require('axios')
 const nodeCache = require('node-cache')
 
-const cache = new nodeCache({ stdTTL: 900 })   // Cache for 15 minutes
-
-const PORT = process.env.PORT || 3000;
 const app = express() 
 
+const cache = new nodeCache({ stdTTL: process.env.CACHE_TTL || 900 })   // Cache for 15 minutes
+const PORT = process.env.PORT || 3000;
+
 app.get('/api/weather', async (req, res) => {
-    const { lat, lon } = req.query
-    
-    if (!lat || !lon) {
-        return res.status(400).json({ error: 'Latitude and longitude are required' })
+    let { lat, lon, city } = req.query
+
+    if(city) {
+        try { 
+            console.log(`Request received for city: ${city}`)
+            const geoResponse = await axios.get(`https://geocoding-api.open-meteo.com/v1/search`, {
+                params: {
+                    name: city,
+                    count: 1,
+                    language: 'en',
+                    format: 'json'
+                }
+            })
+
+            if(!geoResponse.data.results || geoResponse.data.results.length === 0) {
+                return res.status(404).json({ error: 'City not found' })
+            }
+
+            //console.log(geoResponse.data.results)
+            lat = geoResponse.data.results[0].latitude
+            lon = geoResponse.data.results[0].longitude
+
+            console.log(`Coordinates for ${city}: lat=${lat}, lon=${lon}`)
+
+
+        }catch (error) {
+            console.error("Error fetching geocoding data:", error)
+            return res.status(500).json({ error: 'Failed to fetch geocoding data from External API' })
+        }
+    }     
+    else if (!lat || !lon) {
+        return res.status(400).json({ error: 'A City or Latitude and longitude are required' })
     }
 
-    const cacheKey = `${lat},${lon}`
-    const cachedData = cache.get(cacheKey)
+    const cacheKey = `${Number(lat).toFixed(2)},${Number(lon).toFixed(2)}`  //toFixed for better cache and prevent memory bloat
 
     if (cachedData) {
-        console.log("Serving from cache...")
+        console.log(`Serving from cache for key: ${cacheKey}`)
+        //injects city name into the cahced data if it was used
+        if(city){
+            cachedData.queried_city = city
+        }    
         // return the cached key and terminate the request early
         return res.json(cachedData)
     }
